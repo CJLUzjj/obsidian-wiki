@@ -7,7 +7,7 @@
 # What it does:
 #   1. Creates .env from .env.example (if not present)
 #   2. Writes ~/.obsidian-wiki/config so skills work from any project
-#   3. Symlinks .skills/* into each agent's expected skills directory:
+#   3. Symlinks cn/* into each agent's expected skills directory:
 #      Project-local:
 #        - .claude/skills/        (Claude Code)
 #        - .cursor/skills/        (Cursor)
@@ -31,7 +31,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILLS_DIR="$SCRIPT_DIR/.skills"
+SKILLS_DIR="$SCRIPT_DIR/cn"
+
+if [ ! -d "$SKILLS_DIR" ]; then
+  echo "❌  Skills directory not found: $SKILLS_DIR"
+  exit 1
+fi
 
 # Symlink every skill in SKILLS_DIR into TARGET_DIR.
 # Skips real directories to avoid data loss; updates stale symlinks.
