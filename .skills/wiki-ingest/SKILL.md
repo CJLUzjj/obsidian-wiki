@@ -126,6 +126,7 @@ If the QMD results show that 3+ papers touch the same concept, that concept almo
 From the source, identify:
 - **Key concepts** that deserve their own page or belong on an existing one
 - **Entities** (people, tools, projects, organizations) mentioned
+- **Mechanisms and temporal flows** — for algorithms, protocols, replication, transactions, recovery, routing, elections, reads/writes, or conflict handling, extract the ordered sequence of states, messages, decisions, success paths, failure branches, and the invariants that make the mechanism safe. Do not reduce these pages to keyword lists.
 - **Claims** that can be attributed to the source
 - **Relationships** between concepts (what connects to what)
 - **Open questions** the source raises but doesn't answer
@@ -170,6 +171,10 @@ For each page in your plan:
 - Update the `updated` timestamp in frontmatter
 - Add the new source to the `sources` list
 - Resolve any contradictions between old and new information (note them if unresolvable)
+
+**For mechanism-heavy pages:** include a narrative section such as `## 工作流程`, `## 时序流程`, `## 失败与恢复路径`, or `## 安全性约束`. A reader should be able to answer: who initiates the operation, what messages or state transitions happen next, when the system considers the operation successful, what can go wrong, and which invariant prevents an unsafe outcome.
+
+**Use source figures as knowledge input:** when the source includes flowcharts, sequence diagrams, replication diagrams, quorum illustrations, timeline examples, or images with meaningful captions, read the figure information alongside the surrounding text. Do not assume the prose alone captures everything the source teaches. Add a Mermaid diagram only when it materially improves understanding of a mechanism, state transition, topology, quorum overlap, conflict path, or timeline. If captions/text are insufficient, inspect the image itself before distilling claims from it.
 
 **Write a `summary:` frontmatter field** on every new page (1–2 sentences, ≤200 characters) answering "what is this page about?" for a reader who hasn't opened it. When updating an existing page whose meaning has shifted, rewrite the summary to match the new content. This field is what `wiki-query`'s cheap retrieval path reads — a missing or stale summary forces expensive full-page reads.
 
