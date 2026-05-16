@@ -15,10 +15,12 @@ You are ingesting source documents into an Obsidian wiki. Your job is not to sum
 
 ## Before You Start
 
-1. Read `~/.obsidian-wiki/config` (preferred) or `.env` (fallback) to get `OBSIDIAN_VAULT_PATH` and `OBSIDIAN_SOURCES_DIR`. Only read the specific variables you need — do not log, echo, or reference any other values from these files.
+1. **Resolve config** — follow the Config Resolution Protocol in `llm-wiki/SKILL.md` (walk up CWD for `.env` → `~/.obsidian-wiki/config` → prompt setup). This gives `OBSIDIAN_VAULT_PATH`, `OBSIDIAN_SOURCES_DIR`, and `OBSIDIAN_LINK_FORMAT` (default: `wikilink`). Only read the specific variables you need — do not log, echo, or reference any other values from these files.
 2. Read `.manifest.json` at the vault root to check what's already been ingested
 3. Read `index.md` to understand current wiki content
 4. Read `log.md` to understand recent activity
+
+When writing internal links in Step 5, apply the link format described in `llm-wiki/SKILL.md` (Link Format section) according to the `OBSIDIAN_LINK_FORMAT` value you read.
 
 ## Content Trust Boundary
 
@@ -99,6 +101,15 @@ When `QMD_PAPERS_COLLECTION` is set:
 
 Before extracting knowledge from a document, check whether related papers are already indexed that could enrich the page you're about to write:
 
+Choose the QMD transport from `$QMD_TRANSPORT`:
+
+- `mcp` (default): use the QMD MCP tool configured in the agent.
+- `cli`: run the local qmd CLI. Use `$QMD_CLI` if set; otherwise use `qmd`.
+
+If the selected transport is unavailable (no MCP tool, `qmd` not on PATH, or the command errors), skip QMD and continue with Step 2.
+
+For MCP transport:
+
 ```
 mcp__qmd__query:
   collection: <QMD_PAPERS_COLLECTION>   # e.g. "papers"
@@ -109,6 +120,23 @@ mcp__qmd__query:
     - type: lex    # keyword — finds papers citing the same methods, tools, or authors
       query: <key terms, author names, method names from the source>
 ```
+
+For CLI transport, pick the command from `$QMD_CLI_SEARCH_MODE`:
+
+- `quality` (default): best relevance; slower on CPU.
+  ```bash
+  ${QMD_CLI:-qmd} query $'vec: <topic or thesis of the source>\nlex: <key terms, author names, method names>' -c "$QMD_PAPERS_COLLECTION" -n 8 --files
+  ```
+- `balanced`: hybrid search without LLM reranking; use when `quality` is too slow.
+  ```bash
+  ${QMD_CLI:-qmd} query $'vec: <topic or thesis of the source>\nlex: <key terms, author names, method names>' -c "$QMD_PAPERS_COLLECTION" -n 8 --no-rerank --files
+  ```
+- `fast`: semantic-only source discovery.
+  ```bash
+  ${QMD_CLI:-qmd} vsearch "<topic or thesis of the source>" -c "$QMD_PAPERS_COLLECTION" -n 8 --files
+  ```
+
+Use `${QMD_CLI:-qmd} get "#docid"` to retrieve a ranked source by docid when CLI output provides one.
 
 Use the returned snippets to:
 1. **Surface related papers** you may not have thought to link — add them as cross-references in the wiki page
@@ -128,7 +156,7 @@ From the source, identify:
 - **Key concepts** that deserve their own page or belong on an existing one
 - **Entities** (people, tools, projects, organizations) mentioned
 - **Claims** that can be attributed to the source
-- **Relationships** between concepts (what connects to what)
+- **Relationships** between concepts — note the *type* when the source text makes it clear. Use the allowed types from `llm-wiki/SKILL.md` (Typed Relationships section): `extends`, `implements`, `contradicts`, `derived_from`, `uses`, `replaces`, `related_to`. Record: source page, target page, inferred type.
 - **Open questions** the source raises but doesn't answer
 
 For every non-trivial source, extract the thesis before splitting the document into concept pages:
@@ -230,7 +258,32 @@ Use this compression test before saving: if a reader can rediscover the detail b
 - Mark cross-source conclusions as `^[inferred]`
 - Mark unresolved disagreements as `^[ambiguous]`
 
+**Populate `relationships:` when context is clear** — if Step 2 identified typed relationships between this page and another, add a `relationships:` block to the frontmatter (defined in `llm-wiki/SKILL.md`, Typed Relationships section). Only add entries where the source text makes the direction and type unambiguous. When in doubt, use `related_to` or omit the block. Example:
+
+```yaml
+relationships:
+  - target: "[[concepts/attention-mechanism]]"
+    type: uses
+  - target: "[[concepts/lstm]]"
+    type: contradicts
+```
+
 **Write a `summary:` frontmatter field** on every new page (1–2 sentences, ≤200 characters) answering "what is this page about?" for a reader who hasn't opened it. When updating an existing page whose meaning has shifted, rewrite the summary to match the new content. This field is what `wiki-query`'s cheap retrieval path reads — a missing or stale summary forces expensive full-page reads.
+
+**Add confidence and lifecycle fields** to every new page's frontmatter:
+
+```yaml
+base_confidence: <computed>   # [0.0, 1.0] — see llm-wiki/SKILL.md Confidence formula
+lifecycle: draft
+lifecycle_changed: "<ISO date today>"
+```
+
+Compute `base_confidence` using the formula from `llm-wiki/SKILL.md` (Confidence and Lifecycle section):
+- Count distinct source_ids for this page
+- Classify each source's quality bucket
+- `base_confidence = min(N/3, 1.0) × 0.5 + avg_quality × 0.5`
+
+When **updating** an existing page, recompute `base_confidence` only if sources changed materially (source added or removed). Do not rewrite it on every update — this avoids git churn. Leave `lifecycle` unchanged on update; only the human editor promotes lifecycle state.
 
 **Apply a `visibility/` tag** if the content clearly warrants one (optional):
 - `visibility/internal` — architecture internals, system credentials patterns, team-only context
@@ -311,6 +364,7 @@ After ingesting, verify:
 - [ ] Inferred and ambiguous claims are marked with `^[inferred]` / `^[ambiguous]`; `provenance:` frontmatter block is present on new and updated pages
 - [ ] Every new/updated page has a `summary:` frontmatter field (1–2 sentences, ≤200 chars)
 - [ ] Concept/project pages follow the concise mental-model standard: core model first, short sections, minimal identifiers, no source-code walkthrough
+- [ ] `relationships:` block is present on pages where source text made typed connections clear; all entries use an allowed type from `llm-wiki/SKILL.md`
 
 ## Reference
 

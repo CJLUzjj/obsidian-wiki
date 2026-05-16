@@ -15,7 +15,7 @@ You are performing a health check on an Obsidian wiki. Your goal is to find and 
 
 ## Before You Start
 
-1. Read `.env` to get `OBSIDIAN_VAULT_PATH`
+1. **Resolve config** — follow the Config Resolution Protocol in `llm-wiki/SKILL.md` (walk up CWD for `.env` → `~/.obsidian-wiki/config` → prompt setup). This gives `OBSIDIAN_VAULT_PATH`
 2. Read `index.md` for the full page inventory
 3. Read `log.md` for recent activity context
 
@@ -165,6 +165,113 @@ Find pages in `misc/` that have accumulated enough project affinity to be promot
 - Run the `cross-linker` skill first if affinity scores look stale (e.g., `affinity: {}` on a page with many wikilinks)
 - To promote: move the page to `projects/<project-name>/references/` (or another appropriate category), update its `category` frontmatter, remove `promotion_status`, and grep the vault for backlinks to update them
 
+### 12. Confidence and Lifecycle Schema
+
+Enforces the confidence + lifecycle frontmatter schema (see `llm-wiki/SKILL.md`, Confidence and Lifecycle section).
+
+Two modes:
+- **`--check`** (default, read-only) — reports errors and warnings
+- **`--fix`** — may rewrite `base_confidence` only when drift is detected (Rule 12e); never rewrites `lifecycle`
+
+#### Rule 12a — `lifecycle` enum validation
+
+**How to check:** Grep frontmatter for `^lifecycle:` across all pages. Flag any value not in `{draft, reviewed, verified, disputed, archived}`.
+
+**How to fix:** n/a (only a human should set lifecycle state)
+
+#### Rule 12b — `base_confidence` range
+
+**How to check:** Grep frontmatter for `^base_confidence:` across all pages. Flag any value outside `[0.0, 1.0]` or any page missing the field entirely.
+
+**How to fix:** n/a (wrong value means the skill computed it wrong — surface for manual correction)
+
+#### Rule 12c — Stale page report (computed overlay)
+
+Staleness is never stored — it is computed at read time: `is_stale = (today − updated) > 90 days`.
+
+**How to check:** For each page, read `updated:` from frontmatter and compute `is_stale`. If stale, also check `lifecycle:`. Report:
+- Stale pages with `lifecycle: verified` with a louder annotation (these are the most dangerous — high-trust pages that may be wrong)
+- All other stale pages as a standard warning
+
+**How to fix:** `--fix` does **not** rewrite `lifecycle`. Staleness clears automatically when a re-ingest bumps `updated`.
+
+#### Rule 12d — Supersession integrity
+
+**How to check:** For each page with `superseded_by: "[[target]]"`:
+- Verify the target page exists
+- Verify the target page is not itself `archived` (no circular or chained supersession)
+- Verify there are no cycles (A supersedes B which supersedes A)
+- Warn if `lifecycle != archived` while `superseded_by` is set (inconsistent state)
+
+**How to fix:** n/a — flag for human resolution
+
+#### Rule 12e — Confidence drift
+
+**How to check:** For pages that have both `base_confidence:` and `sources:` in frontmatter, recompute `base_confidence` using the formula in `llm-wiki/SKILL.md`. If the stored value differs from the recomputed value by more than 0.05, flag it as drift.
+
+**How to fix (`--fix` only):** Rewrite the `base_confidence` field to the recomputed value. This is the **only rule** that mutates frontmatter automatically.
+
+#### Migration timeline
+
+| Phase | When | Behavior on missing fields |
+|---|---|---|
+| Phase 1: Soft launch | Initial PR | Warning only — missing `base_confidence` or `lifecycle` on any page |
+| Phase 2: New pages enforced | +2 weeks | Error for newly created pages missing the fields; existing pages still warn even if `updated` is bumped during routine maintenance |
+| Phase 3: Full enforcement | +6 weeks, gated on a backfill script shipping in a separate PR | Error for all pages |
+
+#### Output additions
+
+Add to the Wiki Health Report:
+
+```markdown
+### Confidence/Lifecycle Issues (N found)
+- `concepts/foo.md` — missing `lifecycle` field (warning: Phase 1)
+- `entities/bar.md` — `lifecycle: stalestate` is not a valid enum value
+- `concepts/scaling.md` — `base_confidence: 1.4` is out of range [0.0, 1.0]
+- `synthesis/old-analysis.md` — STALE (last updated 2025-10-01, 182 days ago) lifecycle=verified ⚠️ HIGH PRIORITY
+- `concepts/outdated.md` — STALE (last updated 2025-11-15, 137 days ago) lifecycle=draft
+- `entities/tool-v1.md` — `superseded_by: [[entities/tool-v2]]` but lifecycle=draft (expected archived)
+- `concepts/drift-example.md` — base_confidence drift: stored=0.80, recomputed=0.59 (delta=0.21)
+```
+
+Append to the `LINT` log entry:
+```
+- [TIMESTAMP] LINT ... lifecycle_issues=N
+```
+
+### 13. Typed Relationships Validity
+
+Validate `relationships:` frontmatter blocks. Skip pages that have no `relationships:` block — the field is optional.
+
+**Allowed types:** `extends`, `implements`, `contradicts`, `derived_from`, `uses`, `replaces`, `related_to`
+
+**How to check:**
+- Grep frontmatter for `^relationships:` across all vault pages
+- For each page that has a `relationships:` block, read its frontmatter (not the full page body)
+- For each entry in the block:
+  1. **Type validation** — flag any `type:` value not in the allowed set above
+  2. **Broken target** — strip `[[` and `]]` from the `target:` string, normalize (lowercase, spaces→hyphens, strip `.md`), and check whether a `.md` file at that path exists in the vault. Flag unresolved targets.
+  3. **Self-reference** — flag any entry where the resolved target equals the page's own node id
+
+**How to fix:**
+- Invalid type: correct the value to the nearest allowed type, or use `related_to` when the type is ambiguous
+- Broken target: update or remove the entry; if the target page should exist, create it first
+- Self-reference: remove the entry
+
+**Output additions:**
+
+```markdown
+### Typed Relationship Issues (N found)
+- `concepts/foo.md` — relationships[1]: type "contradication" is not an allowed type (did you mean "contradicts"?)
+- `concepts/bar.md` — relationships[0]: target "[[skills/nonexistent-skill]]" resolves to no page in vault
+- `entities/baz.md` — relationships[2]: self-reference (target resolves to this page's own id)
+```
+
+Append to the `LINT` log entry:
+```
+... relationship_issues=N
+```
+
 ### 11. Synthesis Gaps
 
 Identify high-value synthesis opportunities the wiki is missing — concept pairs that co-occur across many pages but have no `synthesis/` page connecting them.
@@ -234,6 +341,10 @@ Pages in misc/ that have ≥ 3 connections to a single project and are ready to 
 |---|---|---|
 | `misc/web-martinfowler-articles-microservices.md` | `obsidian-wiki` | 4 |
 
+### Typed Relationship Issues (N found)
+- `concepts/foo.md` — relationships[1]: type "contradication" is not an allowed type
+- `concepts/bar.md` — relationships[0]: target "[[skills/nonexistent]]" resolves to no page
+
 ### Synthesis Gaps (N found)
 Concept pairs that co-occur frequently but have no synthesis page:
 
@@ -247,7 +358,7 @@ Concept pairs that co-occur frequently but have no synthesis page:
 
 Append to `log.md`:
 ```
-- [TIMESTAMP] LINT issues_found=N orphans=X broken_links=Y stale=Z contradictions=W prov_issues=P missing_summary=S fragmented_clusters=F visibility_issues=V promotion_candidates=C synthesis_gaps=G
+- [TIMESTAMP] LINT issues_found=N orphans=X broken_links=Y stale=Z contradictions=W prov_issues=P missing_summary=S fragmented_clusters=F visibility_issues=V promotion_candidates=C synthesis_gaps=G relationship_issues=R
 ```
 
 Offer to fix issues automatically or let the user decide which to address.

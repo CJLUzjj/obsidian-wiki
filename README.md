@@ -209,6 +209,8 @@ Modes: `by-tag` (default — top 10 tags), `by-category` (the seven vault folder
 
 - **Multi-agent ingest.** Documents, PDFs, Claude Code history (`~/.claude`), Codex sessions (`~/.codex/`), Hermes memories and sessions (`~/.hermes/`), OpenClaw MEMORY.md and sessions (`~/.openclaw/`), Windsurf data (`~/.windsurf`), ChatGPT exports, Slack logs, meeting transcripts, raw text. There are dedicated skills for Claude, Codex, Hermes, and OpenClaw history, plus a catch-all ingest skill for arbitrary text exports.
 
+- **Cross-agent targeted search.** `/wiki-claude`, `/wiki-codex`, `/wiki-hermes`, `/wiki-openclaw`, `/wiki-copilot` — query-driven ingest from a specific agent's raw history. Say `/wiki-codex "rust ownership"` while in Claude Code and it finds your Codex sessions about that topic, extracts the relevant conversation blobs, distills them into wiki pages, and returns a synthesized answer you can use immediately. Different from bulk ingest: this is topic-first, not session-first. Each agent has its own extraction strategy (Codex rollout events, Claude JSONL turns, OpenClaw's pre-synthesized `MEMORY.md`, etc.). Pair with `/memory-bridge diff` to see what each tool uniquely contributed to a topic.
+
 - **Audit and lint.** Find orphaned pages, broken wikilinks, stale content, contradictions, missing frontmatter. See a dashboard of what's been ingested vs what's pending.
 
 - **Automated cross-linking.** After ingesting new pages, the cross-linker scans the vault for unlinked mentions and weaves them into the knowledge graph with `[[wikilinks]]`. No more orphan pages.
@@ -225,27 +227,31 @@ Modes: `by-tag` (default — top 10 tags), `by-category` (the seven vault folder
 
 - **Tiered retrieval.** `wiki-query` reads titles, tags, and page summaries first and only opens page bodies when the cheap pass can't answer. Say "quick answer" or "just scan" to force index-only mode. Keeps query cost roughly flat as your vault grows from 20 pages to 2000.
 
-- **QMD semantic search (optional).** [QMD](https://github.com/tobi/qmd) is a local MCP server that indexes your wiki and source documents for fast semantic search. When `QMD_WIKI_COLLECTION` is set in `.env`, `wiki-query` runs a lex+vec pass against the collection before falling back to Grep — enabling concept-level matches that exact-string search misses. When `QMD_PAPERS_COLLECTION` is set, `wiki-ingest` queries your indexed sources before writing a new page, surfacing related work, detecting contradictions, and deciding whether to create or merge. Without QMD, both skills fall back to Grep/Glob and remain fully functional.
+- **QMD semantic search (optional).** [QMD](https://github.com/tobi/qmd) indexes your wiki and source documents for semantic search. When `QMD_WIKI_COLLECTION` is set in `.env`, `wiki-query` runs a lex+vec pass against the collection before falling back to Grep — enabling concept-level matches that exact-string search misses. When `QMD_PAPERS_COLLECTION` is set, `wiki-ingest` queries your indexed sources before writing a new page, surfacing related work, detecting contradictions, and deciding whether to create or merge. QMD can be used through MCP or the local CLI. Without QMD, both skills fall back to Grep/Glob and remain fully functional.
 
 - **`_raw/` staging directory.** Drop rough notes, clipboard pastes, or quick captures into `_raw/` inside your vault. The next `wiki-ingest` run promotes them to proper wiki pages and removes the originals. Configured via `OBSIDIAN_RAW_DIR` in `.env` (defaults to `_raw`).
 
 ## Optional: QMD Semantic Search
 
-By default, `wiki-ingest` and `wiki-query` use `Grep`/`Glob` for search — fully functional, no extra setup. If your vault grows large or you want concept-level matches across your sources, you can plug in [QMD](https://github.com/tobi/qmd): a local MCP server that runs lex+vec queries against indexed collections.
+By default, `wiki-ingest` and `wiki-query` use `Grep`/`Glob` for search — fully functional, no extra setup. If your vault grows large or you want concept-level matches across your sources, you can plug in [QMD](https://github.com/tobi/qmd), either through MCP or by letting the agent call the local `qmd` CLI.
 
 **Setup:**
 
-1. Install QMD and add it to your MCP config (see the QMD repo for instructions).
+1. Install QMD. If you want MCP mode, also add it to your MCP config (see the QMD repo for instructions).
 2. Index your wiki and/or source documents:
    ```bash
    qmd index --name wiki /path/to/your/vault
    qmd index --name papers /path/to/your/sources
    ```
-3. Set the collection names in your `.env`:
+3. Set the collection names and transport in your `.env`:
    ```env
-   QMD_WIKI_COLLECTION=wiki      # used by wiki-query
-   QMD_PAPERS_COLLECTION=papers  # used by wiki-ingest (source discovery)
+   QMD_WIKI_COLLECTION=wiki       # used by wiki-query
+   QMD_PAPERS_COLLECTION=papers   # used by wiki-ingest (source discovery)
+   QMD_TRANSPORT=mcp              # mcp | cli
+   QMD_CLI_SEARCH_MODE=quality    # quality | balanced | fast
    ```
+
+`QMD_TRANSPORT=mcp` preserves the original behavior and uses an agent-configured QMD MCP server. `QMD_TRANSPORT=cli` runs the local `qmd` command directly. CLI mode defaults to `quality`, which uses `qmd query` with reranking for the best relevance. If that is too slow on CPU, set `QMD_CLI_SEARCH_MODE=balanced` to use `qmd query --no-rerank`, or `fast` for a lighter semantic pass.
 
 **What changes with QMD enabled:**
 
@@ -275,7 +281,10 @@ Everything lives in `.skills/`. Each skill is a markdown file the agent reads wh
 | `codex-history-ingest`  | Mine your `~/.codex` sessions and rollout logs    | `/codex-history-ingest`  |
 | `hermes-history-ingest` | Mine your `~/.hermes` memories and sessions       | `/hermes-history-ingest` |
 | `openclaw-history-ingest` | Mine your `~/.openclaw` MEMORY.md and sessions  | `/openclaw-history-ingest` |
+| `copilot-history-ingest` | Mine your `~/.copilot` CLI session history       | `/copilot-history-ingest` |
 | `data-ingest`           | Ingest any text — chat exports, logs, transcripts | `/data-ingest`           |
+| `ingest-url`            | Fetch and ingest a URL directly into the wiki     | `/ingest-url <url>`      |
+| `obsidian-wiki-ingest`  | Project-scoped automation wrapper for wiki-ingest | `/obsidian-wiki-ingest`  |
 | `wiki-status`           | Show what's ingested, what's pending, the delta   | `/wiki-status`           |
 | `wiki-rebuild`          | Archive, rebuild from scratch, or restore         | `/wiki-rebuild`          |
 | `wiki-query`            | Answer questions from the wiki                    | `/wiki-query`            |
@@ -289,6 +298,11 @@ Everything lives in `.skills/`. Each skill is a markdown file the agent reads wh
 | `wiki-research`         | Autonomous multi-round web research, self-filed   | `/wiki-research [topic]` |
 | `wiki-dashboard`        | Create dynamic Obsidian Bases dashboard views     | `/wiki-dashboard`        |
 | `wiki-synthesize`       | Discover and fill synthesis gaps across concepts  | `/wiki-synthesize`       |
+| `wiki-agent`            | Query-driven ingest from a specific agent's history | `/wiki-claude [topic]`, `/wiki-codex [topic]`, etc. |
+| `memory-bridge`         | Browse and diff knowledge by which AI tool wrote it | `/memory-bridge`         |
+| `daily-update`          | Daily maintenance cycle — freshness, index, hot cache | `/daily-update`        |
+| `impl-validator`        | Validate an implementation against its stated goal | `/impl-validator`       |
+| `graph-colorize`        | Color-code the Obsidian graph by tag/category/visibility | `/graph-colorize`   |
 | `skill-creator`         | Create new skills                                 | `/skill-creator`         |
 
 > **Note:** Slash commands (`/skill-name`) work in Claude Code, Cursor, and Windsurf. In other agents, just describe what you want and the agent will find the right skill.
