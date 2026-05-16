@@ -32,7 +32,15 @@ cd obsidian-wiki
 bash setup.sh
 ```
 
-`setup.sh` asks for your vault path, writes the config to `~/.obsidian-wiki/config`, symlinks skills into all your agents, and installs `wiki-update` globally so you can use it from any project.
+On Windows, use PowerShell instead:
+
+```powershell
+git clone https://github.com/Ar9av/obsidian-wiki.git
+cd obsidian-wiki
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+`setup.sh` asks for your vault path. `setup.ps1` defaults to `C:\Users\84981\iCloudDrive\iCloud~md~obsidian\tannin-obsidian-wiki` and also accepts `-VaultPath "C:\path\to\vault"`. Both scripts write the config to `~/.obsidian-wiki/config`, link skills into all your agents, and install `wiki-update` globally so you can use it from any project.
 
 `OBSIDIAN_VAULT_PATH` is just any directory where you want your wiki documents to live. It can be a new empty folder or an existing Obsidian vault. Obsidian will read from it directly.
 
@@ -40,7 +48,7 @@ Open the project in your agent and say **"set up my wiki"**. That's it.
 
 ## Agent Compatibility
 
-Works with **any AI coding agent** that can read files — Claude Code, Cursor, Windsurf, Codex, Gemini CLI, Kiro, and more. `setup.sh` handles skill discovery for each one automatically.
+Works with **any AI coding agent** that can read files — Claude Code, Cursor, Windsurf, Codex, Gemini CLI, Kiro, and more. `setup.sh` and `setup.ps1` handle skill discovery for each one automatically.
 
 <details>
 <summary><b>Supported agents and manual setup instructions</b></summary>
@@ -64,7 +72,7 @@ Works with **any AI coding agent** that can read files — Claude Code, Cursor, 
 | **GitHub Copilot (CLI)** | — | `~/.copilot/skills/` | ✅ `/wiki-ingest`, `/wiki-query`, etc. |
 | **[Kilocode](https://kilo.ai/)** | `AGENTS.md` / `CLAUDE.md` | `.agents/skills/` + `.claude/skills/` | ✅ `/wiki-ingest`, `/wiki-status`, etc. |
 
-> Each agent has its own convention for discovering skills. `setup.sh` symlinks the canonical `.skills/` directory into each agent's expected location. You write skills once, every agent can use them.
+> Each agent has its own convention for discovering skills. `setup.sh` symlinks the canonical `.skills/` directory into each agent's expected location; on Windows, `setup.ps1` uses directory junctions or symlinks and falls back to copies if linking is blocked. You write skills once, every agent can use them.
 
 ### Manual setup (if you prefer `setup.sh`)
 
